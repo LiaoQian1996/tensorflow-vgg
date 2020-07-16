@@ -5,7 +5,7 @@ import vgg19
 import utils
 
 img1 = utils.load_image("./test_data/tiger.jpeg")
-img2 = utils.load_image("./test_data/puzzle.jpeg")
+img2 = utils.load_image("./test_data/1072.jpg")
 
 batch1 = img1.reshape((1, 224, 224, 3))
 batch2 = img2.reshape((1, 224, 224, 3))
