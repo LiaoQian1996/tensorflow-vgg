@@ -10,7 +10,6 @@ class Vgg19:
     """
     A trainable version VGG19.
     """
-
     def __init__(self, vgg19_npy_path=None, trainable=True, dropout=0.5):
         if vgg19_npy_path is not None:
             self.data_dict = np.load(vgg19_npy_path, encoding='latin1').item()

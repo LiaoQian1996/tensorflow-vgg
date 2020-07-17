@@ -19,7 +19,8 @@ with tf.device('/cpu:0'):
     true_out = tf.placeholder(tf.float32, [1, 1000])
     train_mode = tf.placeholder(tf.bool)
 
-    vgg = vgg19.Vgg19('./vgg19.npy')
+#     vgg = vgg19.Vgg19('./vgg19.npy')
+    vgg = vgg19.Vgg19()
     vgg.build(images, train_mode)
 
     # print number of variables used: 143667240 variables, i.e. ideal size = 548MB
@@ -34,8 +35,9 @@ with tf.device('/cpu:0'):
     # simple 1-step training
     cost = tf.reduce_sum((vgg.prob - true_out) ** 2)
     train = tf.train.GradientDescentOptimizer(0.0001).minimize(cost)
-    sess.run(train, feed_dict={images: batch1, true_out: [img1_true_result], train_mode: True})
-
+    for i in range(1000):
+        sess.run(train, feed_dict={images: batch1, true_out: [img1_true_result], train_mode: True})
+        
     # test classification again, should have a higher probability about tiger
     prob = sess.run(vgg.prob, feed_dict={images: batch1, train_mode: False})
     utils.print_prob(prob[0], './synset.txt')
