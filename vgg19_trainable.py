@@ -66,11 +66,21 @@ class Vgg19:
         self.conv5_1 = self.conv_layer(self.pool4, 512, 512, "conv5_1")
         self.conv5_2 = self.conv_layer(self.conv5_1, 512, 512, "conv5_2")
         self.conv5_3 = self.conv_layer(self.conv5_2, 512, 512, "conv5_3")
-        self.conv5_4 = self.conv_layer(self.conv5_3, 512, 512, "conv5_4")
-        self.pool5 = self.max_pool(self.conv5_4, 'pool5')
-
+        self.conv5_4 = self.conv_layer(self.conv5_3, 512, 512, "conv5_4") # [n, 14, 14, 512]
+        self.pool5 = self.max_pool(self.conv5_4, 'pool5')  # [n, 7, 7, 512]  7*7*512 = 25088
+        '''
+        这里如果用官方vgg19的全连接层的话，会有25088*4096个连接，参数太多了！
+        我们将其改进为1*1卷积降维，然后直接取平均值池化avg_pool，因为我们的图像数据是纹理，特征布满了整个图像空域
+        修改前的代码如下
         self.fc6 = self.fc_layer(self.pool5, 25088, 4096, "fc6")  # 25088 = ((224 // (2 ** 5)) ** 2) * 512
         self.relu6 = tf.nn.relu(self.fc6)
+        '''
+        self.reduce_dim = self.conv_reduce_dim(self.pool5,512,4096,"conv_reduce_dim") # [n,7,7,4096]
+        temp = tf.reduce_mean(self.reduce_dim,axis=1) # 先沿着H方向平均
+        self.global_avg_pool = tf.reduce_mean(temp, axis=1)
+        print(self.global_avg_pool)
+        self.relu6 = tf.nn.relu(self.global_avg_pool)
+        
         if train_mode is not None:
             self.relu6 = tf.cond(train_mode, lambda: tf.nn.dropout(self.relu6, self.dropout), lambda: self.relu6)
         elif self.trainable:
@@ -83,16 +93,18 @@ class Vgg19:
         elif self.trainable:
             self.relu7 = tf.nn.dropout(self.relu7, self.dropout)
 
-        self.fc8 = self.fc_layer(self.relu7, 4096, 1000, "fc8")
+        self.fc8 = self.fc_layer(self.relu7, 4096, 130, "fc8")
 
 #         self.prob = tf.nn.softmax(self.fc8, name="prob")
         self.logits = self.fc8
 
         self.data_dict = None
-
+    
+    '''
+    # 原版平均值池化，实际代码中没有使用，只能够2倍下采样
     def avg_pool(self, bottom, name):
         return tf.nn.avg_pool(bottom, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name=name)
-
+    '''
     def max_pool(self, bottom, name):
         return tf.nn.max_pool(bottom, ksize=[1, 2, 2, 1], strides=[1, 2, 2, 1], padding='SAME', name=name)
 
@@ -105,14 +117,20 @@ class Vgg19:
             relu = tf.nn.relu(bias)
 
             return relu
-
+        
+    def conv_reduce_dim(self, bottom, in_channels, out_channels, name):
+        with tf.variable_scope(name):
+            filt, conv_biases = self.get_conv_var(1, in_channels, out_channels, name)
+            conv = tf.nn.conv2d(bottom, filt, [1, 1, 1, 1], padding='SAME')
+            bias = tf.nn.bias_add(conv, conv_biases)
+            relu = tf.nn.relu(bias)
+            return relu
+        
     def fc_layer(self, bottom, in_size, out_size, name):
         with tf.variable_scope(name):
             weights, biases = self.get_fc_var(in_size, out_size, name)
-
             x = tf.reshape(bottom, [-1, in_size])
             fc = tf.nn.bias_add(tf.matmul(x, weights), biases)
-
             return fc
 
     def get_conv_var(self, filter_size, in_channels, out_channels, name):
