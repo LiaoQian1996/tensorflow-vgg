@@ -8,7 +8,7 @@ import numpy as np
 import collections
 import vgg19_trainable as vgg19
 import utils
-os.environ["CUDA_VISIBLE_DEVICES"]="2"
+os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
 batch_size = 16
 crop_size = 224
@@ -25,47 +25,48 @@ if not os.path.exists(log_dir):
     os.makedirs(log_dir)
 for _ in os.listdir(log_dir):
     os.remove(log_dir + _)
+with tf.device('/cpu:0'):
+    with tf.variable_scope('load_image'):
+            image_list = os.listdir(path)    
+            image_list = [_ for _ in image_list if _.endswith('.png')]
+            if len(image_list)==0:
+                raise Exception('No png files in the input directory !')
+            image_list = [os.path.join(path, _) for _ in image_list]
+            filename_queue = tf.train.slice_input_producer([image_list], \
+                                                           shuffle=True, capacity=128)
+            reader = tf.WholeFileReader()
+            value = tf.read_file(filename_queue[0])
+            image = tf.image.decode_png(value, channels=3)
+            image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+            assertion = tf.assert_equal(tf.shape(image)[2], 3, message="image does not have 3 channels")
+            with tf.control_dependencies([assertion]):
+                image = tf.identity(image)
 
-with tf.variable_scope('load_image'):
-        image_list = os.listdir(path)    
-        image_list = [_ for _ in image_list if _.endswith('.png')]
-        if len(image_list)==0:
-            raise Exception('No png files in the input directory !')
-        image_list = [os.path.join(path, _) for _ in image_list]
-        filename_queue = tf.train.slice_input_producer([image_list], \
-                                                       shuffle=True, capacity=128)
-        reader = tf.WholeFileReader()
-        value = tf.read_file(filename_queue[0])
-        image = tf.image.decode_png(value, channels=3)
-        image = tf.image.convert_image_dtype(image, dtype=tf.float32)
-        assertion = tf.assert_equal(tf.shape(image)[2], 3, message="image does not have 3 channels")
-        with tf.control_dependencies([assertion]):
-            image = tf.identity(image)
+    with tf.name_scope('random_crop'):
+        print('[Config] Use random crop')   
+        input_size = tf.shape(image)
+        h, w = tf.cast(input_size[0], tf.float32),\
+        tf.cast(input_size[1], tf.float32)
+        offset_w = tf.cast(tf.floor(tf.random_uniform([], 0, w - crop_size)),
+                           dtype=tf.int32)
+        offset_h = tf.cast(tf.floor(tf.random_uniform([], 0, h - crop_size)),
+                           dtype=tf.int32)
+        image = tf.image.crop_to_bounding_box(image, offset_h, offset_w, crop_size, crop_size)  
 
-with tf.name_scope('random_crop'):
-    print('[Config] Use random crop')   
-    input_size = tf.shape(image)
-    h, w = tf.cast(input_size[0], tf.float32),\
-    tf.cast(input_size[1], tf.float32)
-    offset_w = tf.cast(tf.floor(tf.random_uniform([], 0, w - crop_size)),
-                       dtype=tf.int32)
-    offset_h = tf.cast(tf.floor(tf.random_uniform([], 0, h - crop_size)),
-                       dtype=tf.int32)
-    image = tf.image.crop_to_bounding_box(image, offset_h, offset_w, crop_size, crop_size)  
-    
-    
-image_batch, filename_batch = tf.train.batch([image, filename_queue],\
-                                        batch_size = batch_size,\
-                                        capacity = 128,\
-                                        num_threads = 4) 
 
-with tf.name_scope('build vgg model and compute graph'):  
-    vgg = vgg19.Vgg19('./20200727.npy')
+    image_batch, filename_batch = tf.train.batch([image, filename_queue],\
+                                            batch_size = batch_size,\
+                                            capacity = 128,\
+                                            num_threads = 4) 
+
+with tf.name_scope('build_vgg_model_and_compute_graph'):  
+#     vgg = vgg19.Vgg19('./20200727.npy')
+    vgg = vgg19.Vgg19()
     true_out = tf.placeholder(tf.float32, [batch_size, 130])
+    train_mode = tf.placeholder(tf.bool)
     vgg.build(image_batch, train_mode)
     # print number of variables used: 143667240 variables, i.e. ideal size = 548MB
     print(vgg.get_var_count())
-    train_mode = tf.placeholder(tf.bool)
     cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = true_out, logits=vgg.logits))
     train = tf.train.GradientDescentOptimizer(0.0001).minimize(cost)
 
@@ -77,6 +78,7 @@ with tf.name_scope('summary_info'):
 with tf.device('/gpu:0'):
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
+    config.allow_soft_placement=True
     sess = tf.Session(config = config)
     sess.run(tf.global_variables_initializer())
     
