@@ -14,11 +14,17 @@ batch_size = 16
 crop_size = 224
 class_num = 130
 max_iteration = 20000
-# path = 'D:/WorkSpace/DATA/marble_test_png/'
-# path = '/home/liaoqian/DATA/data_609/'
+display_step = 20
+summary_step = 100
 # path = 'F:/marble130_dataset/test/'
+log_dir = './log/'
 path = './my_test_data/'
 # path = '/media/liaoqian/Seagate2/marble130_dataset/train/'
+
+if not os.path.exists(log_dir):
+    os.makedirs(log_dir)
+for _ in os.listdir(log_dir):
+    os.remove(log_dir + _)
 
 with tf.variable_scope('load_image'):
         image_list = os.listdir(path)    
@@ -53,28 +59,32 @@ image_batch, filename_batch = tf.train.batch([image, filename_queue],\
                                         capacity = 128,\
                                         num_threads = 4) 
 
+with tf.name_scope('build vgg model and compute graph'):  
+    vgg = vgg19.Vgg19('./20200727.npy')
+    true_out = tf.placeholder(tf.float32, [batch_size, 130])
+    vgg.build(image_batch, train_mode)
+    # print number of variables used: 143667240 variables, i.e. ideal size = 548MB
+    print(vgg.get_var_count())
+    train_mode = tf.placeholder(tf.bool)
+    cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = true_out, logits=vgg.logits))
+    train = tf.train.GradientDescentOptimizer(0.0001).minimize(cost)
+
+with tf.name_scope('summary_info'):
+    tf.summary.scalar('cross_entropy_cost',cost)
+    tf.summary.image('input_image',tf.image.convert_image_dtype(image_batch,\
+                                                            dtype=tf.uint8, saturate=True))
+    
 with tf.device('/gpu:0'):
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
     sess = tf.Session(config = config)
-    train_mode = tf.placeholder(tf.bool)
+    sess.run(tf.global_variables_initializer())
+    
     coord = tf.train.Coordinator()
     thread = tf.train.start_queue_runners(sess, coord)
-    vgg = vgg19.Vgg19('./20200727.npy')
+    merged = tf.summary.merge_all()
+    train_writer = tf.summary.FileWriter(log_dir, sess.graph)  
 
-    true_out = tf.placeholder(tf.float32, [batch_size, 130])
-    
-    vgg = vgg19.Vgg19()
-    vgg.build(image_batch, train_mode)
-
-    # print number of variables used: 143667240 variables, i.e. ideal size = 548MB
-    print(vgg.get_var_count())
-
-    sess.run(tf.global_variables_initializer())
-
-    # compute cost
-    cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = true_out, logits=vgg.logits))
-    train = tf.train.GradientDescentOptimizer(0.0001).minimize(cost)
     for i in range(max_iteration):
         filename_batch_ = sess.run(filename_batch)
         filename_batch_ = [_[0].decode() for _ in filename_batch_]
@@ -88,12 +98,15 @@ with tf.device('/gpu:0'):
         label_batch = np.eye(class_num)[class_num_batch]
         #print(label_batch.shape)
         cost_, _ = sess.run([cost, train], feed_dict={true_out: label_batch, train_mode: True})
-        if i%10 == 0:
+        if i%display_step == 0:
             print('Iteration : %i'%i)
             print('cost : %f'%cost_)
-        if i%100 == 0:
-            with open("cost_record.txt","a") as f:
-                f.write("iteration : %i    cost : %.8f \n"%(i, cost_))
+        if i%summary_step == 0:
+            summary_merged = sess.run(merged)
+            train_writer.add_summary(summary_merged, i+1)
+#             with open("cost_record.txt","a") as f:
+#                 f.write("iteration : %i    cost : %.8f \n"%(i, cost_))
 
 #     # test save
-    vgg.save_npy(sess, './base_on_20200727.npy')
+    if i == max_iteration:
+        vgg.save_npy(sess, './base_on_20200727.npy')
