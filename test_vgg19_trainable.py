@@ -10,12 +10,14 @@ import vgg19_trainable as vgg19
 import utils
 os.environ["CUDA_VISIBLE_DEVICES"]="0"
 
-batch_size = 16
-crop_size = 224
 class_num = 130
+crop_size = 224
+
+batch_size = 1
 max_iteration = 20000
 display_step = 20
 summary_step = 100
+initial_learning_rate = 0.0001
 # path = 'F:/marble130_dataset/test/'
 log_dir = './log/'
 path = './my_test_data/'
@@ -68,13 +70,24 @@ with tf.name_scope('build_vgg_model_and_compute_graph'):
     # print number of variables used: 143667240 variables, i.e. ideal size = 548MB
     print(vgg.get_var_count())
     cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = true_out, logits=vgg.logits))
-    train = tf.train.GradientDescentOptimizer(0.0001).minimize(cost)
+    
+with tf.name_scope('learning_rate_decay'): 
+    global_step = tf.Variable(0, trainable=False)
+    learning_rate = tf.train.exponential_decay(initial_learning_rate,
+                                               global_step=global_step,
+                                               decay_steps=10,
+                                               decay_rate=0.5)
+
+    opt = tf.train.GradientDescentOptimizer(learning_rate)
+    add_global_step = global_step.assign_add(1)
+    train = tf.train.GradientDescentOptimizer(learning_rate).minimize(cost)
 
 with tf.name_scope('summary_info'):
     tf.summary.scalar('cross_entropy_cost',cost)
-    tf.summary.image('input_image',tf.image.convert_image_dtype(image_batch,\
-                                                            dtype=tf.uint8, saturate=True))
-    
+#     tf.summary.image('input_image',tf.image.convert_image_dtype(image_batch,\
+#                                                             dtype=tf.uint8, saturate=True))
+
+
 with tf.device('/gpu:0'):
     config = tf.ConfigProto()
     config.gpu_options.allow_growth = True
@@ -99,15 +112,16 @@ with tf.device('/gpu:0'):
         # label_batch 即为这个batch图像对应的类别标签
         label_batch = np.eye(class_num)[class_num_batch]
         #print(label_batch.shape)
-        cost_, _ = sess.run([cost, train], feed_dict={true_out: label_batch, train_mode: True})
+        cost_, _, _ = sess.run([cost, train, add_global_step],feed_dict={true_out: label_batch, train_mode: True})
         if i%display_step == 0:
             print('Iteration : %i'%i)
             print('cost : %f'%cost_)
         if i%summary_step == 0:
-            summary_merged = sess.run(merged)
+            class_num_pred = sess.run([tf.argmax(vgg.logits, axis = 1), merged] , \
+                                      feed_dict={true_out: label_batch, train_mode: True})
             train_writer.add_summary(summary_merged, i+1)
-#             with open("cost_record.txt","a") as f:
-#                 f.write("iteration : %i    cost : %.8f \n"%(i, cost_))
+            print('当前batch的标签为 ： ', class_num_batch)
+            print('当前batch的预测为 ： ', class_num_pred)
 
 #     # test save
     if i == max_iteration:
