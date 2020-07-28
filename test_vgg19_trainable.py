@@ -8,15 +8,17 @@ import numpy as np
 import collections
 import vgg19_trainable as vgg19
 import utils
+os.environ["CUDA_VISIBLE_DEVICES"]="2"
 
-batch_size = 5
+batch_size = 16
 crop_size = 224
 class_num = 130
-max_iteration = 100000
+max_iteration = 20000
 # path = 'D:/WorkSpace/DATA/marble_test_png/'
 # path = '/home/liaoqian/DATA/data_609/'
-path = 'F:/marble130_dataset/test/'
-
+# path = 'F:/marble130_dataset/test/'
+path = './my_test_data/'
+# path = '/media/liaoqian/Seagate2/marble130_dataset/train/'
 
 with tf.variable_scope('load_image'):
         image_list = os.listdir(path)    
@@ -58,7 +60,7 @@ with tf.device('/gpu:0'):
     train_mode = tf.placeholder(tf.bool)
     coord = tf.train.Coordinator()
     thread = tf.train.start_queue_runners(sess, coord)
-#     vgg = vgg19.Vgg19('./vgg19.npy')
+    vgg = vgg19.Vgg19('./20200727.npy')
 
     true_out = tf.placeholder(tf.float32, [batch_size, 130])
     
@@ -81,17 +83,17 @@ with tf.device('/gpu:0'):
         
         # 下面从一个batch的文件名中提取出一个batch的one-hot编码的label，根据文件名的组织形式修改之
         class_num_batch = [int(_.split('/')[-1].split('_')[0])-1 for _ in filename_batch_]
-        print('Class of this image is ', class_num_batch)
+        #print('Class of this image is ', class_num_batch)
         # label_batch 即为这个batch图像对应的类别标签
         label_batch = np.eye(class_num)[class_num_batch]
-        print(label_batch.shape)
+        #print(label_batch.shape)
         cost_, _ = sess.run([cost, train], feed_dict={true_out: label_batch, train_mode: True})
-        if i%100 == 0:
+        if i%10 == 0:
             print('Iteration : %i'%i)
             print('cost : %f'%cost_)
-        if i%1000 == 0:
-            with open("cost_record.txt","w") as f:
-                f.write("iteration : %i    cost : .4f \n"%(i, cost_))
+        if i%100 == 0:
+            with open("cost_record.txt","a") as f:
+                f.write("iteration : %i    cost : %.8f \n"%(i, cost_))
 
 #     # test save
-    vgg.save_npy(sess, './20200725.npy')
+    vgg.save_npy(sess, './base_on_20200727.npy')
