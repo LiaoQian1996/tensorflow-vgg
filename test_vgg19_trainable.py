@@ -15,6 +15,7 @@ crop_size = 224
 
 batch_size = 1
 max_iteration = 20000
+save_step = max_iteration
 display_step = 20
 summary_step = 100
 initial_learning_rate = 0.0001
@@ -29,17 +30,17 @@ for _ in os.listdir(log_dir):
     os.remove(log_dir + _)
 with tf.device('/cpu:0'):
     with tf.variable_scope('load_image'):
-            image_list = os.listdir(path)    
-            image_list = [_ for _ in image_list if _.endswith('.png')]
-            if len(image_list)==0:
+            filename_list = os.listdir(path)    # path内应只有.png图像文件
+            label_list = [int(filename.split('_')[0])-1 for filename in filename_list]
+            if len(filename_list)==0:
                 raise Exception('No png files in the input directory !')
-            image_list = [os.path.join(path, _) for _ in image_list]
-            filename_queue = tf.train.slice_input_producer([image_list], \
+            filename_list = [os.path.join(path, _) for _ in filename_list]
+            queue = tf.train.slice_input_producer([filename_list,label_list], \
                                                            shuffle=True, capacity=128)
-            reader = tf.WholeFileReader()
-            value = tf.read_file(filename_queue[0])
-            image = tf.image.decode_png(value, channels=3)
-            image = tf.image.convert_image_dtype(image, dtype=tf.float32)
+            label = queue[1]
+            image = tf.read_file(queue[0])
+            image = tf.image.decode_png(image, channels=3)
+            image = tf.image.convert_image_dtype(image, dtype=tf.float32) # [0,255] -> [0., 1.]
             assertion = tf.assert_equal(tf.shape(image)[2], 3, message="image does not have 3 channels")
             with tf.control_dependencies([assertion]):
                 image = tf.identity(image)
@@ -55,8 +56,7 @@ with tf.device('/cpu:0'):
                            dtype=tf.int32)
         image = tf.image.crop_to_bounding_box(image, offset_h, offset_w, crop_size, crop_size)  
 
-
-    image_batch, filename_batch = tf.train.batch([image, filename_queue],\
+    image_batch, label_batch = tf.train.batch([image, label],\
                                             batch_size = batch_size,\
                                             capacity = 128,\
                                             num_threads = 4) 
@@ -64,12 +64,13 @@ with tf.device('/cpu:0'):
 with tf.name_scope('build_vgg_model_and_compute_graph'):  
 #     vgg = vgg19.Vgg19('./20200727.npy')
     vgg = vgg19.Vgg19()
-    true_out = tf.placeholder(tf.float32, [batch_size, 130])
+    label_batch = tf.one_hot(label_batch, class_num)
+    print('label_batch : ', label_batch.shape)
     train_mode = tf.placeholder(tf.bool)
     vgg.build(image_batch, train_mode)
     # print number of variables used: 143667240 variables, i.e. ideal size = 548MB
     print(vgg.get_var_count())
-    cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = true_out, logits=vgg.logits))
+    cost = tf.reduce_mean(tf.nn.softmax_cross_entropy_with_logits(labels = label_batch, logits=vgg.logits))
     
 with tf.name_scope('learning_rate_decay'): 
     global_step = tf.Variable(0, trainable=False)
@@ -101,27 +102,27 @@ with tf.device('/gpu:0'):
     train_writer = tf.summary.FileWriter(log_dir, sess.graph)  
 
     for i in range(max_iteration):
-        filename_batch_ = sess.run(filename_batch)
-        filename_batch_ = [_[0].decode() for _ in filename_batch_]
-        # 从而得到一个batch的文件名
-        # print(filename_batch_)
+        fetches = {
+            "train" : train,
+            "global_step" : add_global_step
+        }
         
-        # 下面从一个batch的文件名中提取出一个batch的one-hot编码的label，根据文件名的组织形式修改之
-        class_num_batch = [int(_.split('/')[-1].split('_')[0])-1 for _ in filename_batch_]
-        #print('Class of this image is ', class_num_batch)
-        # label_batch 即为这个batch图像对应的类别标签
-        label_batch = np.eye(class_num)[class_num_batch]
-        #print(label_batch.shape)
-        cost_, _, _ = sess.run([cost, train, add_global_step],feed_dict={true_out: label_batch, train_mode: True})
+        if i%display_step == 0:
+            fetches["cost"] = cost
+            
+        if i%summary_step == 0:
+            fetches["class_num_pred"] = tf.argmax(vgg.logits, axis = 1)
+            fetches["summary"] = merged
+            
+        results = sess.run(fetches, feed_dict = {train_mode: True})
+        
         if i%display_step == 0:
             print('Iteration : %i'%i)
-            print('cost : %f'%cost_)
+            print('cost : %f'%results["cost"])
         if i%summary_step == 0:
-            class_num_pred = sess.run([tf.argmax(vgg.logits, axis = 1), merged] , \
-                                      feed_dict={true_out: label_batch, train_mode: True})
-            train_writer.add_summary(summary_merged, i+1)
+            train_writer.add_summary(results["summary"], i+1)
             print('当前batch的标签为 ： ', class_num_batch)
-            print('当前batch的预测为 ： ', class_num_pred)
+            print('当前batch的预测为 ： ', results["class_num_pred"])
 
 #     # test save
     if i == max_iteration:

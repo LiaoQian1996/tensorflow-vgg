@@ -1,14 +1,17 @@
 import numpy as np
 import PIL.Image as Image
 
-def load_image(target_dir):
-    image = Image.open(target_dir)
-    short_edge = min(image.size)
-    image = image.crop(box=(0,0,short_edge,short_edge))
-    print(image.size)
-    image = image.resize((224,224))
-    image = np.asarray(image)/255
-    return image
+# def load_image(target_dir):
+#     image = Image.open(target_dir)
+#     short_edge = min(image.size)
+#     image = image.crop(box=(0,0,short_edge,short_edge))
+#     print(image.size)
+#     image = image.resize((224,224))
+#     image = np.asarray(image)/255
+#     return image
+
+def preprocess(image):
+    pass
 
 # returns the top1 string
 def print_prob(prob, file_path):
